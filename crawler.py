@@ -5,6 +5,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+
 import googlemaps
 import h3
 
@@ -55,7 +56,7 @@ h3_resolution_to_edge_length_in_meters = {
 
 
 def get_hex_centers(
-        lat: float, lng: float, distance_meters: int, h_resolution: int
+    lat: float, lng: float, distance_meters: int, h_resolution: int
 ) -> tuple[tuple[float, float]]:
     """
     returns a list of latitude and longitude centroids based on
@@ -73,7 +74,9 @@ def get_hex_centers(
     hex_origin = h3.latlng_to_cell(lat, lng, h_resolution)
     hexes = h3.grid_disk(hex_origin, k_distance)  # Get surrounding hexagons
     hex_centroids = tuple(h3.cell_to_latlng(h) for h in hexes)
-    print(f"Broke up {lat},{lng},r={distance_meters} to {len(hex_centroids)} hexes of {k_distance} hops.")
+    print(
+        f"Broke up {lat},{lng},r={distance_meters} to {len(hex_centroids)} hexes of {k_distance} hops."
+    )
     return hex_centroids  # noqa
 
 
@@ -98,37 +101,40 @@ def get_places(gclient: Any, lat: float, lng: float, radius_m: int):
             page_token=next_page_token,
         )
         next_page_token = places_result.get("next_page_token")
-
-        for place in places_result["results"]:
-            # pp(place)
-            print(
-                f"{place['name']:<30} {place['vicinity']:<40} {place['geometry']['location']}"
-            )
         places.extend(places_result["results"])
 
         time.sleep(2)  # google rate-limits
         if not next_page_token:
             break
 
-
     print(f"Found a total of {len(places)} places at {lat}, {lng} radius={radius_m}m")
     return places
 
 
-def search_radius(search_lat, search_long, h_resolution: int, radius_m: int, dict_storage: dict):
+def search_radius(
+    search_lat, search_long, h_resolution: int, radius_m: int, dict_storage: dict
+):
     print(f"Searching radius...{search_lat},{search_long}, r={radius_m}m")
     hex_radius = math.ceil(h3_resolution_to_edge_length_in_meters[h_resolution])
     hex_coords = get_hex_centers(search_lat, search_long, radius_m, h_resolution)
+    num_hex_coords = len(hex_coords)
 
-    for hex_lat, hex_lng in hex_coords:
+    for i, (hex_lat, hex_lng) in enumerate(hex_coords):
+        print(f"{i + 1}/{num_hex_coords} @ {hex_lat},{hex_lng}")
         places_found = get_places(client, hex_lat, hex_lng, hex_radius)
         for place in places_found:
-            dict_storage[place["place_id"]] = place
+            if place["place_id"] not in dict_storage:
+                print(
+                    f"{place['name']:<30} {place['vicinity']:<40} {place['geometry']['location']}"
+                )
+                dict_storage[place["place_id"]] = place
+            else:
+                print(f"Skipping duplicate {place['name']:<30} {place['vicinity']:<40}")
 
         if len(places_found) == 60:
             print(
                 "Warning: found maximum number of places, recursing into ",
-                f"lat:{hex_lat} lng:{hex_lng}, radius_m:{hex_radius}"
+                f"lat:{hex_lat} lng:{hex_lng}, radius_m:{hex_radius}",
             )
             search_radius(hex_lat, hex_lng, h_resolution + 1, hex_radius, dict_storage)
 
@@ -136,23 +142,29 @@ def search_radius(search_lat, search_long, h_resolution: int, radius_m: int, dic
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("zipcode", type=str, help="Zip code")
+    parser.add_argument("-r", type=int, help="radius in meters to start", default=1000)
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        help="resolution to start with, use a higher resolution for more dense areas.",
+        default=8,
+    )
     api_key = os.getenv("API_KEY")
-
     assert api_key, "API_KEY environment variable not set"
 
     storage = Path("places_storage.json")
     if storage.exists():
         place_store = json.load(storage.open("r"))
+        print(f"Loaded storage with {len(place_store)} places")
     else:
         place_store = {}
 
     options = parser.parse_args()
+    start_resolution = options.resolution
+    search_radius_m = options.r
     client = googlemaps.Client(key=api_key)
 
     zip_lat, zip_lng = geocode(client, options.zipcode)
-
-    start_resolution = 7
-    search_radius_m = 5000
 
     try:
         search_radius(zip_lat, zip_lng, start_resolution, search_radius_m, place_store)
@@ -160,5 +172,5 @@ if __name__ == "__main__":
         print("Keyboard Interrupt detected, flushing map.")
     finally:
         with storage.open("w") as fh:
+            print(f"Flushing storage with {len(place_store)} places")
             json.dump(place_store, fh)  # noqa
-
