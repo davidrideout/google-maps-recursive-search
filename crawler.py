@@ -128,7 +128,7 @@ def search_radius(search_lat, search_long, h_resolution: int, radius_m: int, dic
         if len(places_found) == 60:
             print(
                 "Warning: found maximum number of places, recursing into ",
-                f"lat:{hex_lat} lng:{hex_lng}, radius_m:{radius_m}"
+                f"lat:{hex_lat} lng:{hex_lng}, radius_m:{hex_radius}"
             )
             search_radius(hex_lat, hex_lng, h_resolution + 1, hex_radius, dict_storage)
 
