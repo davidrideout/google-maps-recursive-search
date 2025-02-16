@@ -130,7 +130,7 @@ def search_radius(search_lat, search_long, h_resolution: int, radius_m: int, dic
                 "Warning: found maximum number of places, recursing into ",
                 f"lat:{hex_lat} lng:{hex_lng}, radius_m:{radius_m}"
             )
-            search_radius(search_lat, search_long, h_resolution + 1, hex_radius, dict_storage)
+            search_radius(hex_lat, hex_lng, h_resolution + 1, hex_radius, dict_storage)
 
 
 if __name__ == "__main__":
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     zip_lat, zip_lng = geocode(client, options.zipcode)
 
     start_resolution = 7
-    search_radius_m = 2000  # 2km
+    search_radius_m = 5000
 
     try:
         search_radius(zip_lat, zip_lng, start_resolution, search_radius_m, place_store)
