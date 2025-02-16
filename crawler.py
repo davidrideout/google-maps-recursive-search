@@ -75,7 +75,8 @@ def get_hex_centers(
     hexes = h3.grid_disk(hex_origin, k_distance)  # Get surrounding hexagons
     hex_centroids = tuple(h3.cell_to_latlng(h) for h in hexes)
     print(
-        f"Broke up {lat},{lng},r={distance_meters} to {len(hex_centroids)} hexes of {k_distance} hops."
+        f"Broke up {lat},{lng},r={distance_meters} to {len(hex_centroids)} "
+        f"hexes of {k_distance} hops with radius={h3_resolution_to_edge_length_in_meters[h_resolution]}m"
     )
     return hex_centroids  # noqa
 
@@ -112,7 +113,12 @@ def get_places(gclient: Any, lat: float, lng: float, radius_m: int):
 
 
 def search_radius(
-    search_lat, search_long, h_resolution: int, radius_m: int, dict_storage: dict
+    search_lat,
+    search_long,
+    h_resolution: int,
+    radius_m: int,
+    dict_storage: dict,
+    seen_locations: set,
 ):
     print(f"Searching radius...{search_lat},{search_long}, r={radius_m}m")
     hex_radius = math.ceil(h3_resolution_to_edge_length_in_meters[h_resolution])
@@ -121,6 +127,10 @@ def search_radius(
 
     for i, (hex_lat, hex_lng) in enumerate(hex_coords):
         print(f"{i + 1}/{num_hex_coords} @ {hex_lat},{hex_lng}")
+        if (hex_lat, hex_lng) in seen_locations:
+            print("  - skipping")
+            continue
+
         places_found = get_places(client, hex_lat, hex_lng, hex_radius)
         for place in places_found:
             if place["place_id"] not in dict_storage:
@@ -136,7 +146,16 @@ def search_radius(
                 "Warning: found maximum number of places, recursing into ",
                 f"lat:{hex_lat} lng:{hex_lng}, radius_m:{hex_radius}",
             )
-            search_radius(hex_lat, hex_lng, h_resolution + 1, hex_radius, dict_storage)
+            search_radius(
+                hex_lat,
+                hex_lng,
+                h_resolution + 1,
+                hex_radius,
+                dict_storage,
+                seen_locations,
+            )
+
+        seen_locations.add((hex_lat, hex_lng))
 
 
 if __name__ == "__main__":
@@ -152,25 +171,48 @@ if __name__ == "__main__":
     api_key = os.getenv("API_KEY")
     assert api_key, "API_KEY environment variable not set"
 
-    storage = Path("places_storage.json")
+    options = parser.parse_args()
+    start_resolution = options.resolution
+    search_radius_m = options.r
+
+    filename_meta = "_".join(
+        [options.zipcode, f"resolution{start_resolution}", f"radius{search_radius_m}"]
+    )
+
+    crawled_locations = Path(f"coord_history_{filename_meta}.json")
+    if crawled_locations.exists():
+        crawled_store = set([tuple(t) for t in json.load(crawled_locations.open("r"))])
+    else:
+        crawled_store = set()
+
+    storage = Path(f"places_storage_{filename_meta}.json")
     if storage.exists():
         place_store = json.load(storage.open("r"))
         print(f"Loaded storage with {len(place_store)} places")
     else:
         place_store = {}
 
-    options = parser.parse_args()
-    start_resolution = options.resolution
-    search_radius_m = options.r
     client = googlemaps.Client(key=api_key)
-
     zip_lat, zip_lng = geocode(client, options.zipcode)
 
     try:
-        search_radius(zip_lat, zip_lng, start_resolution, search_radius_m, place_store)
+        search_radius(
+            zip_lat,
+            zip_lng,
+            start_resolution,
+            search_radius_m,
+            place_store,
+            crawled_store,
+        )
     except KeyboardInterrupt:
         print("Keyboard Interrupt detected, flushing map.")
     finally:
         with storage.open("w") as fh:
             print(f"Flushing storage with {len(place_store)} places")
             json.dump(place_store, fh)  # noqa
+
+        with crawled_locations.open("w") as fh:
+            print(
+                f"Flushing crawled store location with {len(crawled_store)} coordinates."
+            )
+            json.dump(list(crawled_store), fh)  # noqa
